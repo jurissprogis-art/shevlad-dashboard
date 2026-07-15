@@ -115,6 +115,11 @@ tr:hover td{background:#232c3d}
 .runslog-pill .t{color:var(--gold);font-weight:700}
 .runslog-pill .rev-up{color:var(--green)}
 .runslog-pill .rev-flat{color:var(--dim)}
+.integrity-badge{display:inline-flex;align-items:center;gap:5px;border-radius:14px;padding:3px 10px;font-family:'Space Mono',monospace;font-size:12px;font-weight:700;white-space:nowrap;margin-left:auto}
+.integrity-ok{background:rgba(94,232,137,.12);border:1px solid var(--green);color:var(--green)}
+.integrity-warn{background:rgba(250,184,143,.14);border:1px solid #fab88f;color:#fab88f}
+.integrity-err{background:rgba(250,139,143,.14);border:1px solid var(--red);color:var(--red)}
+.integrity-unknown{background:transparent;border:1px solid var(--bd);color:var(--dim)}
 .mom-badge{font-size:13.5px;font-weight:700;margin-left:3px;display:inline-block}
 .mom-up{color:var(--green)}
 .mom-dn{color:var(--red)}
@@ -213,6 +218,7 @@ let lastUpdateSource = null; // {type:'manual', used, limit} when the currently 
 let manualTimesLog = []; // array of "HH:mm" strings for today's successful manual refreshes (from server)
 let lastKnownRunInfo = null; // {lastRunAt, runsToday} - authoritative last successful pipeline write, from status-check or manual refresh
 let todayRunsLog = []; // array of {time, unitsSold, revenue, uniqueSkusSold, unitsAdded, newItems, removedItems, isFirstRun} - one entry per individual pipeline run today (09:00/13:00/18:00/manual), from status-check webhook run_log
+let feedIntegrity = null; // {hasData, itemsSeen, uniqueKeys, duplicateCount, itemDropPct, status, issues, lastCheckedTime} - proves every unique XML feed item was actually read on the last pipeline run
 let lastRefreshChangeData = null; // full response data from the most recent successful manual refresh this session (for re-render on lang switch)
 const MANUAL_REFRESH_WEBHOOK = 'https://hook.eu1.make.com/tne3sb7z5uha8elqkkwdpikky7p7swa9';
 const MANUAL_REFRESH_TOKEN = 'shvld-mrf-9f2a7c';
@@ -246,6 +252,11 @@ const T = {
   runslog_pill_sold: { lv: '−{u} gab / −{r} EUR', ru: '−{u} шт / −{r} EUR' },
   runslog_pill_flat: { lv: 'bez izmaiņām', ru: 'без изменений' },
   runslog_pill_tooltip: { lv: 'Pārdots: {u} gab ({r} EUR) · Papildināts: {a} gab · Jauni/noņemti: {n}/{rm}', ru: 'Продано: {u} шт ({r} EUR) · Пополнено: {a} шт · Новых/удалённых: {n}/{rm}' },
+  integrity_ok: { lv: '✓ {n}/{u} preces pārbaudītas', ru: '✓ {n}/{u} товаров проверено' },
+  integrity_warn: { lv: '⚠ Brīdinājums: {issue}', ru: '⚠ Предупреждение: {issue}' },
+  integrity_err: { lv: '✕ Kļūda: {issue}', ru: '✕ Ошибка: {issue}' },
+  integrity_unknown: { lv: 'integritāte vēl nav pārbaudīta', ru: 'целостность ещё не проверена' },
+  integrity_tooltip: { lv: 'Pēdējā pārbaude {time}: no XML feed nolasītas {n} preces, no tām {u} unikālas, {d} dublēti EAN. Šis skaitlis tiek pārbaudīts katrā automātikas palaidienā.', ru: 'Последняя проверка {time}: из XML фида прочитано {n} товаров, из них {u} уникальных, {d} дублей EAN. Это число проверяется при каждом запуске автоматики.' },
   refresh_changes_title: { lv: 'Izmaiņas šajā atjaunošanā:', ru: 'Изменения при этом обновлении:' },
   refresh_changes_sold: { lv: '−{units} gab. pārdots (−{rev} EUR), {skus} unikālas SKU', ru: '−{units} шт. продано (−{rev} EUR), {skus} уникальных SKU' },
   refresh_changes_added: { lv: '+{units} gab. papildināts, {skus} unikālas SKU', ru: '+{units} шт. пополнено, {skus} уникальных SKU' },
@@ -455,6 +466,9 @@ async function checkStatus(){
     if(data && Array.isArray(data.runsLog)){
       todayRunsLog = data.runsLog;
     }
+    if(data && data.feedIntegrity){
+      feedIntegrity = data.feedIntegrity;
+    }
   } catch(e){ /* best-effort, non-blocking - dashboard still works without this */ }
 }
 
@@ -475,12 +489,35 @@ function renderManualLog(){
   logEl.innerHTML = `${t('manual_log_title')} <span class="mono">${timesText}</span> (${manualTimesLog.length}/3)`;
 }
 
+function renderIntegrityBadge(){
+  if(!feedIntegrity || !feedIntegrity.hasData){
+    return `<span class="integrity-badge integrity-unknown">${t('integrity_unknown')}</span>`;
+  }
+  const n = feedIntegrity.itemsSeen, u = feedIntegrity.uniqueKeys, d = feedIntegrity.duplicateCount||0;
+  const tooltip = t('integrity_tooltip', {time: feedIntegrity.lastCheckedTime||'—', n:n, u:u, d:d});
+  let cls = 'integrity-ok', label = t('integrity_ok', {n:n, u:u});
+  if(feedIntegrity.status === 'WARNING'){
+    cls = 'integrity-warn';
+    label = t('integrity_warn', {issue: (feedIntegrity.issues && feedIntegrity.issues[0]) || '—'});
+  } else if(feedIntegrity.status === 'ERROR'){
+    cls = 'integrity-err';
+    label = t('integrity_err', {issue: (feedIntegrity.issues && feedIntegrity.issues[0]) || '—'});
+  }
+  return `<span class="integrity-badge ${cls}" title="${esc(tooltip)}">${esc(label)}</span>`;
+}
+
 function renderRunsLog(){
   const bar = document.getElementById('runsLogBar');
   if(!bar) return;
+  const badgeHtml = renderIntegrityBadge();
   if(!todayRunsLog || !todayRunsLog.length){
-    bar.style.display = 'none';
-    bar.innerHTML = '';
+    if(!feedIntegrity || !feedIntegrity.hasData){
+      bar.style.display = 'none';
+      bar.innerHTML = '';
+      return;
+    }
+    bar.innerHTML = `<span class="rlb-title">${t('runslog_title')}</span><span style="color:var(--dim);font-size:12.5px">${t('runslog_none')}</span>${badgeHtml}`;
+    bar.style.display = 'flex';
     return;
   }
   const pills = todayRunsLog.map(function(r){
@@ -491,7 +528,7 @@ function renderRunsLog(){
     const tooltip = t('runslog_pill_tooltip',{u:sold, r:rev.toFixed(2), a:r.unitsAdded||0, n:r.newItems||0, rm:r.removedItems||0});
     return `<span class="runslog-pill" title="${esc(tooltip)}"><span class="t">${esc(r.time||'—')}</span>${bodyHtml}</span>`;
   }).join('');
-  bar.innerHTML = `<span class="rlb-title">${t('runslog_title')}</span>${pills}`;
+  bar.innerHTML = `<span class="rlb-title">${t('runslog_title')}</span>${pills}${badgeHtml}`;
   bar.style.display = 'flex';
 }
 

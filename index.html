@@ -363,9 +363,17 @@ const T = {
 
   sect_today_title: { lv: 'Šodien pārdotās un papildinātas preces', ru: 'Товары, проданные и пополненные сегодня' },
   panel_sold_title: { lv: 'Šodien pārdotās preces', ru: 'Товары, проданные сегодня' },
-  panel_sold_sub: { lv: '{n} preces · kopā {sum}', ru: '{n} товаров · всего {sum}' },
+  panel_sold_sub: { lv: '{n} preces · kopā {sum} · dati par {date}', ru: '{n} товаров · всего {sum} · данные за {date}' },
   panel_purchased_title: { lv: 'Šodien papildinātas preces', ru: 'Товары, пополненные сегодня' },
-  panel_purchased_sub: { lv: '{n} preces · +{qty} gab. kopā', ru: '{n} товаров · +{qty} шт. всего' },
+  panel_purchased_sub: { lv: '{n} preces · +{qty} gab. kopā · dati par {date}', ru: '{n} товаров · +{qty} шт. всего · данные за {date}' },
+
+  sect_top30_month_title: { lv: 'TOP 30 preces — šis mēnesis', ru: 'ТОП-30 товаров — этот месяц' },
+  sect_top30_30d_title: { lv: 'TOP 30 preces — pēdējās 30 dienas', ru: 'ТОП-30 товаров — последние 30 дней' },
+  panel_top30_sold_title: { lv: 'TOP 30 pārdotākās preces', ru: 'ТОП-30 самых продаваемых товаров' },
+  panel_top30_sold_sub: { lv: '{n} preces · kopā {sum}', ru: '{n} товаров · всего {sum}' },
+  panel_top30_purchased_title: { lv: 'TOP 30 papildinātās preces', ru: 'ТОП-30 пополненных товаров' },
+  panel_top30_purchased_sub: { lv: '{n} preces · +{qty} gab. kopā', ru: '{n} товаров · +{qty} шт. всего' },
+  top30_empty: { lv: 'Vēl nav pietiekami datu šim periodam — saraksts aizpildīsies, tiklīdz vēsture uzkrāsies.', ru: 'Пока недостаточно данных за этот период — список заполнится по мере накопления истории.' },
   th_sold_qty: { lv: 'Pārdots (gab)', ru: 'Продано (шт)' },
   th_sum: { lv: 'Summa', ru: 'Сумма' },
   th_added_qty: { lv: 'Papildināts (gab)', ru: 'Пополнено (шт)' },
@@ -449,7 +457,7 @@ function switchLang(lang){
   updateLangButtons();
   applyStaticText();
   if(lastState){
-    renderDashboard(lastState.agg, lastState.historyRecords, lastState.trackerRecords, null, lastState.oosActive, lastState.oosResolved, lastState.soldRecords, lastState.purchasedRecords);
+    renderDashboard(lastState.agg, lastState.historyRecords, lastState.trackerRecords, null, lastState.oosActive, lastState.oosResolved, lastState.soldRecords, lastState.purchasedRecords, lastState.soldDate, lastState.purchasedDate, lastState.top30Month, lastState.top3030Days);
   } else if(lastError){
     showError(lastError);
   }
@@ -621,6 +629,16 @@ async function fetchCsv(sheetId, tabName){
   return csvToObjects(text);
 }
 
+// Raw row-array variant (no header-keyed object) — needed for sheets with two independent
+// tables side by side sharing the same column names (see buildTop30FromSheet below).
+async function fetchCsvRaw(sheetId, tabName){
+  const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}&headers=1`;
+  const r = await fetch(url);
+  if(!r.ok) throw new Error(`HTTP ${r.status} (${tabName})`);
+  const text = await r.text();
+  return parseCsv(text);
+}
+
 function cleanNum(s){ return String(s==null?'':s).replace(/,/g,'').trim(); }
 
 // Katalogs tab has category "banner" rows (only col A filled) interspersed between real product
@@ -669,29 +687,59 @@ function buildTrackerFromOldStock(rows){
 }
 
 // Sodien_Pardotas / Sodien_Papildinatas tabs are written by the Analytics Dashboard scenario
-// (module 15) from the day's itemized sold_items_json / items_json (purchases) data — full,
-// unrestricted per-SKU lists so the dashboard can show them all, scrollable, like the
+// (module 15) from the LATEST day that actually had sold/purchased items (fallback lookback up
+// to 31 days), tagged with a "Datums" column so the dashboard can label which day is shown —
+// full, unrestricted per-SKU lists so the dashboard can show them all, scrollable, like the
 // brand/category value breakdown panels above.
 function buildSoldFromSheet(rows){
-  return rows
-    .filter(o => o['SKU'] && o['SKU'] !== '(šodien vēl nav pārdošanu)')
+  const date = rows.length ? (rows[0]['Datums']||'') : '';
+  const items = rows
+    .filter(o => o['SKU'] && o['SKU'].charAt(0) !== '(')
     .map(o => ({
       sku: o['SKU']||'', name: o['Nosaukums']||'', category: o['Kategorija']||'', brand: o['Zīmols']||'',
       price: parseFloat(cleanNum(o['Cena EUR'])||'0') || 0,
       sold_qty: parseInt(cleanNum(o['Pārdots (gab)'])||'0',10) || 0,
       sum: parseFloat(cleanNum(o['Summa EUR'])||'0') || 0
     }));
+  return {date, items};
 }
 
 function buildPurchasedFromSheet(rows){
-  return rows
-    .filter(o => o['SKU'] && o['SKU'] !== '(šodien vēl nav papildinājumu)')
+  const date = rows.length ? (rows[0]['Datums']||'') : '';
+  const items = rows
+    .filter(o => o['SKU'] && o['SKU'].charAt(0) !== '(')
     .map(o => ({
       sku: o['SKU']||'', name: o['Nosaukums']||'', category: o['Kategorija']||'', brand: o['Zīmols']||'',
       price: parseFloat(cleanNum(o['Cena EUR'])||'0') || 0,
       added_qty: parseInt(cleanNum(o['Papildināts (gab)'])||'0',10) || 0,
       new_stock: parseInt(cleanNum(o['Jaunais atlikums'])||'0',10) || 0
     }));
+  return {date, items};
+}
+
+// TOP30_Menesis / TOP30_30Dienas tabs hold TWO independent tables side by side on one sheet:
+// sold aggregation in columns A:G, a blank gap column H, purchased aggregation in columns I:N.
+// Because both blocks share column names (SKU, Nosaukums, ...), csvToObjects() cannot be used
+// (duplicate header keys would collide) — parse the raw row arrays directly by column index.
+function buildTop30FromSheet(rawRows){
+  if(!rawRows || rawRows.length < 2) return {sold:[], purchased:[]};
+  const dataRows = rawRows.slice(1);
+  const sold = dataRows
+    .filter(r => r[0] && r[0].charAt(0) !== '(')
+    .map(r => ({
+      sku: r[0]||'', name: r[1]||'', category: r[2]||'', brand: r[3]||'',
+      price: parseFloat(cleanNum(r[4])||'0') || 0,
+      sold_qty: parseInt(cleanNum(r[5])||'0',10) || 0,
+      sum: parseFloat(cleanNum(r[6])||'0') || 0
+    }));
+  const purchased = dataRows
+    .filter(r => r[8] && r[8].charAt(0) !== '(')
+    .map(r => ({
+      sku: r[8]||'', name: r[9]||'', category: r[10]||'', brand: r[11]||'',
+      price: parseFloat(cleanNum(r[12])||'0') || 0,
+      added_qty: parseInt(cleanNum(r[13])||'0',10) || 0
+    }));
+  return {sold, purchased};
 }
 
 function computeAggregates(items){
@@ -1034,10 +1082,14 @@ function computeMovement(historyRecords){
   };
 }
 
-function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActive, oosResolved, soldRecords, purchasedRecords){
+function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActive, oosResolved, soldRecords, purchasedRecords, soldDate, purchasedDate, top30Month, top3030Days){
   soldRecords = soldRecords || (lastState && lastState.soldRecords) || [];
   purchasedRecords = purchasedRecords || (lastState && lastState.purchasedRecords) || [];
-  lastState = {agg, historyRecords, trackerRecords, oosActive, oosResolved, soldRecords, purchasedRecords};
+  soldDate = soldDate !== undefined ? soldDate : ((lastState && lastState.soldDate) || '');
+  purchasedDate = purchasedDate !== undefined ? purchasedDate : ((lastState && lastState.purchasedDate) || '');
+  top30Month = top30Month || (lastState && lastState.top30Month) || {sold:[], purchased:[]};
+  top3030Days = top3030Days || (lastState && lastState.top3030Days) || {sold:[], purchased:[]};
+  lastState = {agg, historyRecords, trackerRecords, oosActive, oosResolved, soldRecords, purchasedRecords, soldDate, purchasedDate, top30Month, top3030Days};
   const {stocked, orderOnly, totalValue, totalUnits, byBrand, byCat, byRoom, totalItems} = agg;
   const mv = computeMovement(historyRecords);
   const brandCount = Object.keys(byBrand).length;
@@ -1143,6 +1195,41 @@ function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActi
     </tr>`).join('');
     purchasedHtml = `<table><thead><tr><th>SKU</th><th>${t('th_product')}</th><th>${t('th_brand')}</th><th class="num">${t('th_added_qty')}</th><th class="num">${t('th_price')}</th><th class="num">${t('th_new_stock')}</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
+
+  // TOP-30 sold/purchased tables (month-to-date and rolling-30-day), built from Make.com's
+  // per-SKU aggregation (TOP30_Menesis / TOP30_30Dienas sheets) — same visual style as the
+  // "today sold/purchased" panels above, but pre-sorted top-30 by Make.com already.
+  function top30SoldHtml(list){
+    if(!list.length) return `<div class="placeholder">${t('top30_empty')}</div>`;
+    const rows = list.map(r => `<tr>
+      <td class="mono dim" style="font-size:14px">${esc(r.sku||'—')}</td>
+      <td>${esc(r.name||'')}</td>
+      <td class="mono">${esc(r.brand||'Nezināms')}</td>
+      <td class="mono num">${r.sold_qty||0}</td>
+      <td class="mono num">${(r.price||0).toFixed(2)} €</td>
+      <td class="mono num bold">${(r.sum||0).toFixed(2)} €</td>
+    </tr>`).join('');
+    return `<table><thead><tr><th>SKU</th><th>${t('th_product')}</th><th>${t('th_brand')}</th><th class="num">${t('th_sold_qty')}</th><th class="num">${t('th_price')}</th><th class="num">${t('th_sum')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  function top30PurchasedHtml(list){
+    if(!list.length) return `<div class="placeholder">${t('top30_empty')}</div>`;
+    const rows = list.map(r => `<tr>
+      <td class="mono dim" style="font-size:14px">${esc(r.sku||'—')}</td>
+      <td>${esc(r.name||'')}</td>
+      <td class="mono">${esc(r.brand||'Nezināms')}</td>
+      <td class="mono num">${r.added_qty||0}</td>
+      <td class="mono num">${(r.price||0).toFixed(2)} €</td>
+    </tr>`).join('');
+    return `<table><thead><tr><th>SKU</th><th>${t('th_product')}</th><th>${t('th_brand')}</th><th class="num">${t('th_added_qty')}</th><th class="num">${t('th_price')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+  const top30MonthSoldSum = top30Month.sold.reduce((s,r)=>s+(r.sum||0),0);
+  const top30MonthPurchasedQty = top30Month.purchased.reduce((s,r)=>s+(r.added_qty||0),0);
+  const top3030SoldSum = top3030Days.sold.reduce((s,r)=>s+(r.sum||0),0);
+  const top3030PurchasedQty = top3030Days.purchased.reduce((s,r)=>s+(r.added_qty||0),0);
+  const top30MonthSoldHtml = top30SoldHtml(top30Month.sold);
+  const top30MonthPurchasedHtml = top30PurchasedHtml(top30Month.purchased);
+  const top3030SoldHtml = top30SoldHtml(top3030Days.sold);
+  const top3030PurchasedHtml = top30PurchasedHtml(top3030Days.purchased);
 
   // Advanced Old Stock breakdown: per-tier top10 + per-category old-stock ratio.
   // Uses only data already present in trackerRecords/agg — no Make.com changes needed.
@@ -1292,8 +1379,8 @@ function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActi
 
 <div class="sect" style="border-left-color:var(--cyan);margin-top:26px">${t('sect_today_title')}</div>
 <div class="grid2">
-  <div class="panel"><div class="pt"><span class="tt">${t('panel_sold_title')}</span><span class="ds">${t('panel_sold_sub',{n:soldSorted.length, sum:soldTotalSum.toFixed(2)+' €'})}</span></div><div class="scrollbars">${soldHtml}</div></div>
-  <div class="panel"><div class="pt"><span class="tt">${t('panel_purchased_title')}</span><span class="ds">${t('panel_purchased_sub',{n:purchasedSorted.length, qty:purchasedTotalQty})}</span></div><div class="scrollbars">${purchasedHtml}</div></div>
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_sold_title')}</span><span class="ds">${t('panel_sold_sub',{n:soldSorted.length, sum:soldTotalSum.toFixed(2)+' €', date:esc(soldDate||'—')})}</span></div><div class="scrollbars">${soldHtml}</div></div>
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_purchased_title')}</span><span class="ds">${t('panel_purchased_sub',{n:purchasedSorted.length, qty:purchasedTotalQty, date:esc(purchasedDate||'—')})}</span></div><div class="scrollbars">${purchasedHtml}</div></div>
 </div>
 
 <div class="sect" style="border-left-color:var(--purple);margin-top:26px">${t('sect2_title')} <span class="month-label" style="font-size:19px;margin-left:4px">— ${LM[now.getMonth()]}</span> <span class="tag">${t('sect2_tag',{n:curMonthAgg.days})}</span></div>
@@ -1312,6 +1399,12 @@ function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActi
   ${monthlySummaryLine(mAgg, now.getFullYear())}
 </div>
 
+<div class="sect" style="border-left-color:var(--purple);margin-top:26px">${t('sect_top30_month_title')}</div>
+<div class="grid2">
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_top30_sold_title')}</span><span class="ds">${t('panel_top30_sold_sub',{n:top30Month.sold.length, sum:top30MonthSoldSum.toFixed(2)+' €'})}</span></div><div class="scrollbars">${top30MonthSoldHtml}</div></div>
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_top30_purchased_title')}</span><span class="ds">${t('panel_top30_purchased_sub',{n:top30Month.purchased.length, qty:top30MonthPurchasedQty})}</span></div><div class="scrollbars">${top30MonthPurchasedHtml}</div></div>
+</div>
+
 <div class="sect" style="border-left-color:var(--gold);margin-top:26px">${t('sect3_title')} <span class="tag">${mv.isRolling30 ? t('sect3_tag_full') : t('sect3_tag_partial',{n:mv.entries.length})}</span></div>
 <div class="timeline-sub" style="margin:-2px 0 5px 3px">${t('sect3_sub')}</div>
 <div class="ministat-row">
@@ -1325,6 +1418,12 @@ function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActi
   <div class="timeline-head">${t('tl3_head')}</div>
   <div class="timeline-sub">${t('tl3_sub',{n:mv.windowEntries.length})}</div>
   <div class="chart-wrap">${svgTimeline(mv.windowEntries, totalUnits, 'timelineSvg30')}</div>
+</div>
+
+<div class="sect" style="border-left-color:var(--gold);margin-top:26px">${t('sect_top30_30d_title')}</div>
+<div class="grid2">
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_top30_sold_title')}</span><span class="ds">${t('panel_top30_sold_sub',{n:top3030Days.sold.length, sum:top3030SoldSum.toFixed(2)+' €'})}</span></div><div class="scrollbars">${top3030SoldHtml}</div></div>
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_top30_purchased_title')}</span><span class="ds">${t('panel_top30_purchased_sub',{n:top3030Days.purchased.length, qty:top3030PurchasedQty})}</span></div><div class="scrollbars">${top3030PurchasedHtml}</div></div>
 </div>
 
 <div class="sect">${t('sect_obs_title')}</div>
@@ -1419,12 +1518,14 @@ async function loadAll(){
   document.getElementById('updateBarText').textContent = t('updatebar_loading');
   document.getElementById('app').innerHTML = `<div class="loading">${t('loading')}</div>`;
   try {
-    const [katalogsRows, dienasRows, oldStockRows, pardotasRows, papildinatasRows] = await Promise.all([
+    const [katalogsRows, dienasRows, oldStockRows, pardotasRows, papildinatasRows, top30MenesisRaw, top3030DienasRaw] = await Promise.all([
       fetchCsv(CATALOG_SHEET_ID, 'Katalogs'),
       fetchCsv(ANALYTICS_SHEET_ID, 'Dienas_Grafiks'),
       fetchCsv(ANALYTICS_SHEET_ID, 'Old_Stock'),
       fetchCsv(ANALYTICS_SHEET_ID, 'Sodien_Pardotas'),
       fetchCsv(ANALYTICS_SHEET_ID, 'Sodien_Papildinatas'),
+      fetchCsvRaw(ANALYTICS_SHEET_ID, 'TOP30_Menesis'),
+      fetchCsvRaw(ANALYTICS_SHEET_ID, 'TOP30_30Dienas'),
       checkStatus()
     ]);
 
@@ -1432,11 +1533,13 @@ async function loadAll(){
     const agg = computeAggregates(items);
     const historyRecords = buildHistoryFromDienasGrafiks(dienasRows);
     const trackerRecords = buildTrackerFromOldStock(oldStockRows);
-    const soldRecords = buildSoldFromSheet(pardotasRows);
-    const purchasedRecords = buildPurchasedFromSheet(papildinatasRows);
+    const soldResult = buildSoldFromSheet(pardotasRows);
+    const purchasedResult = buildPurchasedFromSheet(papildinatasRows);
+    const top30Month = buildTop30FromSheet(top30MenesisRaw);
+    const top3030Days = buildTop30FromSheet(top3030DienasRaw);
     const oosActive = [], oosResolved = [];
 
-    renderDashboard(agg, historyRecords, trackerRecords, null, oosActive, oosResolved, soldRecords, purchasedRecords);
+    renderDashboard(agg, historyRecords, trackerRecords, null, oosActive, oosResolved, soldResult.items, purchasedResult.items, soldResult.date, purchasedResult.date, top30Month, top3030Days);
 
     const now = new Date();
     document.getElementById('statusBadge').innerHTML = `<i></i>${t('status_live',{time:now.toLocaleString('lv-LV')})}`;

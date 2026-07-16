@@ -361,6 +361,18 @@ const T = {
   th_new: { lv: 'Jauni', ru: 'Новых' },
   th_removed: { lv: 'Noņemti', ru: 'Удалённых' },
 
+  sect_today_title: { lv: 'Šodien pārdotās un papildinātas preces', ru: 'Товары, проданные и пополненные сегодня' },
+  panel_sold_title: { lv: 'Šodien pārdotās preces', ru: 'Товары, проданные сегодня' },
+  panel_sold_sub: { lv: '{n} preces · kopā {sum}', ru: '{n} товаров · всего {sum}' },
+  panel_purchased_title: { lv: 'Šodien papildinātas preces', ru: 'Товары, пополненные сегодня' },
+  panel_purchased_sub: { lv: '{n} preces · +{qty} gab. kopā', ru: '{n} товаров · +{qty} шт. всего' },
+  th_sold_qty: { lv: 'Pārdots (gab)', ru: 'Продано (шт)' },
+  th_sum: { lv: 'Summa', ru: 'Сумма' },
+  th_added_qty: { lv: 'Papildināts (gab)', ru: 'Пополнено (шт)' },
+  th_new_stock: { lv: 'Jaunais atlikums', ru: 'Новый остаток' },
+  sold_empty: { lv: 'Šodien vēl nav pārdošanu. Dati atjaunojas ar katru Analytics Dashboard palaišanu (3x dienā).', ru: 'Сегодня продаж пока не было. Данные обновляются при каждом запуске Analytics Dashboard (3 раза в день).' },
+  purchased_empty: { lv: 'Šodien vēl nav papildinājumu. Dati atjaunojas ar katru Analytics Dashboard palaišanu (3x dienā).', ru: 'Сегодня пополнений пока не было. Данные обновляются при каждом запуске Analytics Dashboard (3 раза в день).' },
+
   sect_top15_title: { lv: 'TOP 15 preces', ru: 'ТОП-15 товаров' },
   panel_byvalue: { lv: 'Pēc vērtības', ru: 'По стоимости' },
   panel_bystock: { lv: 'Pēc atlikuma', ru: 'По остатку' },
@@ -437,7 +449,7 @@ function switchLang(lang){
   updateLangButtons();
   applyStaticText();
   if(lastState){
-    renderDashboard(lastState.agg, lastState.historyRecords, lastState.trackerRecords, null, lastState.oosActive, lastState.oosResolved);
+    renderDashboard(lastState.agg, lastState.historyRecords, lastState.trackerRecords, null, lastState.oosActive, lastState.oosResolved, lastState.soldRecords, lastState.purchasedRecords);
   } else if(lastError){
     showError(lastError);
   }
@@ -653,6 +665,32 @@ function buildTrackerFromOldStock(rows){
       stock_qty: parseInt(cleanNum(o['Atlikums'])||'0',10) || 0,
       last_sale_date: o['Pēdējā pārdošana'] || null,
       days_since_sale: parseInt(cleanNum(o['Dienas bez pārdošanas'])||'0',10) || 0
+    }));
+}
+
+// Sodien_Pardotas / Sodien_Papildinatas tabs are written by the Analytics Dashboard scenario
+// (module 15) from the day's itemized sold_items_json / items_json (purchases) data — full,
+// unrestricted per-SKU lists so the dashboard can show them all, scrollable, like the
+// brand/category value breakdown panels above.
+function buildSoldFromSheet(rows){
+  return rows
+    .filter(o => o['SKU'] && o['SKU'] !== '(šodien vēl nav pārdošanu)')
+    .map(o => ({
+      sku: o['SKU']||'', name: o['Nosaukums']||'', category: o['Kategorija']||'', brand: o['Zīmols']||'',
+      price: parseFloat(cleanNum(o['Cena EUR'])||'0') || 0,
+      sold_qty: parseInt(cleanNum(o['Pārdots (gab)'])||'0',10) || 0,
+      sum: parseFloat(cleanNum(o['Summa EUR'])||'0') || 0
+    }));
+}
+
+function buildPurchasedFromSheet(rows){
+  return rows
+    .filter(o => o['SKU'] && o['SKU'] !== '(šodien vēl nav papildinājumu)')
+    .map(o => ({
+      sku: o['SKU']||'', name: o['Nosaukums']||'', category: o['Kategorija']||'', brand: o['Zīmols']||'',
+      price: parseFloat(cleanNum(o['Cena EUR'])||'0') || 0,
+      added_qty: parseInt(cleanNum(o['Papildināts (gab)'])||'0',10) || 0,
+      new_stock: parseInt(cleanNum(o['Jaunais atlikums'])||'0',10) || 0
     }));
 }
 
@@ -996,8 +1034,10 @@ function computeMovement(historyRecords){
   };
 }
 
-function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActive, oosResolved){
-  lastState = {agg, historyRecords, trackerRecords, oosActive, oosResolved};
+function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActive, oosResolved, soldRecords, purchasedRecords){
+  soldRecords = soldRecords || (lastState && lastState.soldRecords) || [];
+  purchasedRecords = purchasedRecords || (lastState && lastState.purchasedRecords) || [];
+  lastState = {agg, historyRecords, trackerRecords, oosActive, oosResolved, soldRecords, purchasedRecords};
   const {stocked, orderOnly, totalValue, totalUnits, byBrand, byCat, byRoom, totalItems} = agg;
   const mv = computeMovement(historyRecords);
   const brandCount = Object.keys(byBrand).length;
@@ -1067,6 +1107,41 @@ function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActi
       <td class="mono num d-dn">${tr.days_since_sale}</td>
     </tr>`).join('');
     oldStockHtml = `<table><thead><tr><th>${t('th_product')}</th><th>${t('th_brand')}</th><th class="num">${t('th_stock')}</th><th class="num">${t('th_days_no_sale')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  const soldSorted = [...soldRecords].sort((a,b)=>(b.sum||0)-(a.sum||0));
+  const purchasedSorted = [...purchasedRecords].sort((a,b)=>(b.added_qty||0)-(a.added_qty||0));
+  const soldTotalSum = soldSorted.reduce((s,r)=>s+(r.sum||0),0);
+  const purchasedTotalQty = purchasedSorted.reduce((s,r)=>s+(r.added_qty||0),0);
+
+  let soldHtml;
+  if(!soldSorted.length){
+    soldHtml = `<div class="placeholder">${t('sold_empty')}</div>`;
+  } else {
+    const rows = soldSorted.map(r => `<tr>
+      <td class="mono dim" style="font-size:14px">${esc(r.sku||'—')}</td>
+      <td>${esc(r.name||'')}</td>
+      <td class="mono">${esc(r.brand||'Nezināms')}</td>
+      <td class="mono num">${r.sold_qty||0}</td>
+      <td class="mono num">${(r.price||0).toFixed(2)} €</td>
+      <td class="mono num bold">${(r.sum||0).toFixed(2)} €</td>
+    </tr>`).join('');
+    soldHtml = `<table><thead><tr><th>SKU</th><th>${t('th_product')}</th><th>${t('th_brand')}</th><th class="num">${t('th_sold_qty')}</th><th class="num">${t('th_price')}</th><th class="num">${t('th_sum')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  let purchasedHtml;
+  if(!purchasedSorted.length){
+    purchasedHtml = `<div class="placeholder">${t('purchased_empty')}</div>`;
+  } else {
+    const rows = purchasedSorted.map(r => `<tr>
+      <td class="mono dim" style="font-size:14px">${esc(r.sku||'—')}</td>
+      <td>${esc(r.name||'')}</td>
+      <td class="mono">${esc(r.brand||'Nezināms')}</td>
+      <td class="mono num">${r.added_qty||0}</td>
+      <td class="mono num">${(r.price||0).toFixed(2)} €</td>
+      <td class="mono num">${r.new_stock||0}</td>
+    </tr>`).join('');
+    purchasedHtml = `<table><thead><tr><th>SKU</th><th>${t('th_product')}</th><th>${t('th_brand')}</th><th class="num">${t('th_added_qty')}</th><th class="num">${t('th_price')}</th><th class="num">${t('th_new_stock')}</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   // Advanced Old Stock breakdown: per-tier top10 + per-category old-stock ratio.
@@ -1280,6 +1355,12 @@ ${roomSorted.map(([k,v])=>`<div class="brow"><div class="blabel">${esc(k)}</div>
 <div class="sect">${t('sect_history_title')}</div>
 <div class="panel"><div class="pt"><span class="tt">${t('panel_history_title')}</span><span class="ds">${t('panel_history_sub')}</span></div>${historyHtml}</div>
 
+<div class="sect">${t('sect_today_title')}</div>
+<div class="grid2">
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_sold_title')}</span><span class="ds">${t('panel_sold_sub',{n:soldSorted.length, sum:soldTotalSum.toFixed(2)+' €'})}</span></div><div class="scrollbars">${soldHtml}</div></div>
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_purchased_title')}</span><span class="ds">${t('panel_purchased_sub',{n:purchasedSorted.length, qty:purchasedTotalQty})}</span></div><div class="scrollbars">${purchasedHtml}</div></div>
+</div>
+
 <div class="sect">${t('sect_top15_title')}</div>
 <div class="grid2">
   <div class="panel"><div class="pt"><span class="tt">${t('panel_byvalue')}</span></div>
@@ -1338,10 +1419,12 @@ async function loadAll(){
   document.getElementById('updateBarText').textContent = t('updatebar_loading');
   document.getElementById('app').innerHTML = `<div class="loading">${t('loading')}</div>`;
   try {
-    const [katalogsRows, dienasRows, oldStockRows] = await Promise.all([
+    const [katalogsRows, dienasRows, oldStockRows, pardotasRows, papildinatasRows] = await Promise.all([
       fetchCsv(CATALOG_SHEET_ID, 'Katalogs'),
       fetchCsv(ANALYTICS_SHEET_ID, 'Dienas_Grafiks'),
       fetchCsv(ANALYTICS_SHEET_ID, 'Old_Stock'),
+      fetchCsv(ANALYTICS_SHEET_ID, 'Sodien_Pardotas'),
+      fetchCsv(ANALYTICS_SHEET_ID, 'Sodien_Papildinatas'),
       checkStatus()
     ]);
 
@@ -1349,9 +1432,11 @@ async function loadAll(){
     const agg = computeAggregates(items);
     const historyRecords = buildHistoryFromDienasGrafiks(dienasRows);
     const trackerRecords = buildTrackerFromOldStock(oldStockRows);
+    const soldRecords = buildSoldFromSheet(pardotasRows);
+    const purchasedRecords = buildPurchasedFromSheet(papildinatasRows);
     const oosActive = [], oosResolved = [];
 
-    renderDashboard(agg, historyRecords, trackerRecords, null, oosActive, oosResolved);
+    renderDashboard(agg, historyRecords, trackerRecords, null, oosActive, oosResolved, soldRecords, purchasedRecords);
 
     const now = new Date();
     document.getElementById('statusBadge').innerHTML = `<i></i>${t('status_live',{time:now.toLocaleString('lv-LV')})}`;

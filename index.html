@@ -1290,6 +1290,12 @@ function renderDashboard(agg, historyRecords, trackerRecords, updatedAt, oosActi
   </div>
 </div>
 
+<div class="sect" style="border-left-color:var(--cyan);margin-top:26px">${t('sect_today_title')}</div>
+<div class="grid2">
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_sold_title')}</span><span class="ds">${t('panel_sold_sub',{n:soldSorted.length, sum:soldTotalSum.toFixed(2)+' €'})}</span></div><div class="scrollbars">${soldHtml}</div></div>
+  <div class="panel"><div class="pt"><span class="tt">${t('panel_purchased_title')}</span><span class="ds">${t('panel_purchased_sub',{n:purchasedSorted.length, qty:purchasedTotalQty})}</span></div><div class="scrollbars">${purchasedHtml}</div></div>
+</div>
+
 <div class="sect" style="border-left-color:var(--purple);margin-top:26px">${t('sect2_title')} <span class="month-label" style="font-size:19px;margin-left:4px">— ${LM[now.getMonth()]}</span> <span class="tag">${t('sect2_tag',{n:curMonthAgg.days})}</span></div>
 <div class="timeline-sub" style="margin:-2px 0 5px 3px">${t('sect2_sub')}</div>
 <div class="ministat-row">
@@ -1354,12 +1360,6 @@ ${roomSorted.map(([k,v])=>`<div class="brow"><div class="blabel">${esc(k)}</div>
 
 <div class="sect">${t('sect_history_title')}</div>
 <div class="panel"><div class="pt"><span class="tt">${t('panel_history_title')}</span><span class="ds">${t('panel_history_sub')}</span></div>${historyHtml}</div>
-
-<div class="sect">${t('sect_today_title')}</div>
-<div class="grid2">
-  <div class="panel"><div class="pt"><span class="tt">${t('panel_sold_title')}</span><span class="ds">${t('panel_sold_sub',{n:soldSorted.length, sum:soldTotalSum.toFixed(2)+' €'})}</span></div><div class="scrollbars">${soldHtml}</div></div>
-  <div class="panel"><div class="pt"><span class="tt">${t('panel_purchased_title')}</span><span class="ds">${t('panel_purchased_sub',{n:purchasedSorted.length, qty:purchasedTotalQty})}</span></div><div class="scrollbars">${purchasedHtml}</div></div>
-</div>
 
 <div class="sect">${t('sect_top15_title')}</div>
 <div class="grid2">
